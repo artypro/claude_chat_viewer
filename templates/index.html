@@ -4,23 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claude Chat Viewer</title>
-  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">C</span><div><strong>Claude Chat Viewer</strong><small>Локальная история диалогов</small></div></div>
+    <div class="brand"><span class="brand-mark">C</span><div><strong>Claude Chat Viewer</strong><small data-i18n="subtitle">Локальная история диалогов</small></div></div>
     <div class="scan-area">
-      <input id="folderPath" type="text" placeholder="Путь к ~/.claude или папке projects">
-      <button id="scanBtn">Найти чаты</button>
+      <select id="recentPathsSelect" class="recent-paths-select" aria-label="Недавние папки" data-i18n-aria="recentFolders"><option value="" data-i18n="recentFoldersOption">Недавние папки…</option></select>
+      <input id="folderPath" type="text" list="recentPaths" placeholder="Путь к ~/.claude или папке projects" data-i18n-placeholder="pathPlaceholder">
+      <datalist id="recentPaths"></datalist>
+      <button id="scanBtn" data-i18n="scan">Найти чаты</button>
+      <select id="languageSelect" class="language-select" aria-label="Language" title="Language">
+        <option value="ru">RU</option><option value="en">EN</option>
+      </select>
     </div>
   </header>
 
   <main class="layout">
     <aside class="sidebar">
-      <div class="sidebar-heading"><span>Диалоги</span><span id="chatCount" class="count">0</span></div>
-      <input id="searchInput" class="search" type="search" placeholder="Поиск по диалогам...">
+      <div class="sidebar-heading"><span data-i18n="conversations">Диалоги</span><span id="chatCount" class="count">0</span></div>
+      <input id="searchInput" class="search" type="search" placeholder="Поиск по диалогам..." data-i18n-placeholder="searchPlaceholder">
       <div id="chatList" class="chat-list">
-        <div class="empty-state">Укажи папку Claude сверху и нажми «Найти чаты».</div>
+        <div class="empty-state" data-i18n="initialEmpty">Локальные чаты появятся здесь. Для просмотра исходных чатов укажи папку Claude сверху.</div>
       </div>
       <div id="scanInfo" class="scan-info"></div>
     </aside>
@@ -28,17 +33,17 @@
     <section class="conversation">
       <div id="welcome" class="welcome">
         <div class="welcome-icon">✳</div>
-        <h1>История диалогов Claude</h1>
-        <p>Выбери диалог слева, чтобы открыть переписку.</p>
+        <h1 data-i18n="welcomeTitle">История диалогов Claude</h1>
+        <p data-i18n="welcomeText">Выбери диалог слева, чтобы открыть переписку.</p>
       </div>
       <div id="conversationActions" class="conversation-actions hidden">
         <span id="conversationTitle" class="conversation-title"></span>
-        <div class="conversation-buttons"><button id="saveCurrentChatBtn" class="primary-btn" type="button">Сохранить чат</button><button id="copyHistoryBtn" class="secondary-btn" type="button">Скопировать историю</button></div>
+        <div class="conversation-buttons"><button id="saveCurrentChatBtn" class="primary-btn" type="button" data-i18n="saveChat">Сохранить чат</button><button id="copyHistoryBtn" class="secondary-btn" type="button" data-i18n="copyHistory">Скопировать историю</button></div>
       </div>
       <div id="messages" class="messages hidden"></div>
     </section>
   </main>
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>

@@ -474,6 +474,17 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/api/local-chats")
+def get_local_chats():
+    """Return saved local chats independently of the currently scanned source folder."""
+    local_chats = load_local_chats()
+    for local_chat in local_chats.values():
+        CHAT_FILES[local_chat["id"]] = local_chat
+    chats = [public_chat(chat) for chat in local_chats.values()]
+    chats.sort(key=lambda chat: chat.get("updated", ""), reverse=True)
+    return jsonify({"count": len(chats), "chats": chats})
+
+
 @app.post("/api/scan")
 def scan():
     global CHAT_FILES, PROJECTS_DIR
@@ -487,10 +498,12 @@ def scan():
         return jsonify({"error": str(exc)}), 400
 
     PROJECTS_DIR = projects_dir
-    previous_sources = {k: v for k, v in CHAT_FILES.items() if not v.get("is_local")}
-    CHAT_FILES = load_archived_chats()
-    for previous in previous_sources.values():
-        CHAT_FILES[previous["id"]] = merge_chats(CHAT_FILES.get(previous["id"]), previous)
+    # Each scan must represent ONLY the source directory entered by the user.
+    # Keep archived snapshots separately and apply them only when the matching
+    # source chat is actually found in this scan. Never carry over source chats
+    # from the previous scan: that made changing the path appear to do nothing.
+    archived_chats = load_archived_chats()
+    CHAT_FILES = {}
 
     source_count = 0
     for project_dir in projects_dir.iterdir():
@@ -501,7 +514,7 @@ def scan():
             if not parsed:
                 continue
             source_count += 1
-            CHAT_FILES[parsed["id"]] = merge_chats(CHAT_FILES.get(parsed["id"]), parsed)
+            CHAT_FILES[parsed["id"]] = merge_chats(archived_chats.get(parsed["id"]), parsed)
 
     local_chats = load_local_chats()
     for local_chat in local_chats.values():
