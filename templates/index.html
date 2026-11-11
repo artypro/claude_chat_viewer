@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Chat Viewer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">C</span><div><strong>Claude Chat Viewer</strong><small>Локальная история диалогов</small></div></div>
+    <div class="scan-area">
+      <input id="folderPath" type="text" placeholder="Путь к ~/.claude или папке projects">
+      <button id="scanBtn">Найти чаты</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-heading"><span>Диалоги</span><span id="chatCount" class="count">0</span></div>
+      <input id="searchInput" class="search" type="search" placeholder="Поиск по диалогам...">
+      <div id="chatList" class="chat-list">
+        <div class="empty-state">Укажи папку Claude сверху и нажми «Найти чаты».</div>
+      </div>
+      <div id="scanInfo" class="scan-info"></div>
+    </aside>
+
+    <section class="conversation">
+      <div id="welcome" class="welcome">
+        <div class="welcome-icon">✳</div>
+        <h1>История диалогов Claude</h1>
+        <p>Выбери диалог слева, чтобы открыть переписку.</p>
+      </div>
+      <div id="conversationActions" class="conversation-actions hidden">
+        <span id="conversationTitle" class="conversation-title"></span>
+        <button id="copyHistoryBtn" class="secondary-btn" type="button">Скопировать историю</button>
+      </div>
+      <div id="messages" class="messages hidden"></div>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
