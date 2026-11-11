@@ -17,37 +17,61 @@ function formatTime(timestamp) {
 
 function renderList() {
   const query = $("searchInput").value.trim().toLowerCase();
-  const filtered = chats.filter(c => `${c.title} ${c.project} ${c.preview}`.toLowerCase().includes(query));
+  const filtered = chats.filter(c => `${c.title} ${c.project} ${c.preview || ""}`.toLowerCase().includes(query));
+  const localChats = filtered.filter(c => c.is_local);
+  const sourceChats = filtered.filter(c => !c.is_local);
   const groups = new Map();
-  for (const chat of filtered) {
+  for (const chat of sourceChats) {
     const name = chat.project || "Без проекта";
     if (!groups.has(name)) groups.set(name, []);
     groups.get(name).push(chat);
   }
+  // Внутри каждого проекта сначала показываем чаты с самой свежей активностью.
+  for (const items of groups.values()) {
+    items.sort((a, b) => {
+      const timeA = Date.parse(a.updated || "") || 0;
+      const timeB = Date.parse(b.updated || "") || 0;
+      return timeB - timeA || String(a.title || "").localeCompare(String(b.title || ""), "ru");
+    });
+  }
+
   if (!filtered.length) {
     $("chatList").innerHTML = `<div class="empty-state">Ничего не найдено.</div>`;
     return;
   }
 
-  $("chatList").innerHTML = [...groups.entries()].map(([project, items]) => {
+  let html = "";
+  if (localChats.length) {
+    html += `<section class="local-section">
+      <div class="sidebar-section-title">Локальные чаты <span>${localChats.length}</span></div>
+      <div class="local-chat-list">${localChats.map(c => `
+        <button type="button" class="chat-item local-chat-item ${c.id===selectedId?"active":""}" data-id="${c.id}" title="${escapeHtml(c.title)}">
+          <span class="local-chat-mark">●</span><span class="chat-name">${escapeHtml(c.title)}</span>
+        </button>`).join("")}</div>
+    </section>`;
+  }
+
+  html += [...groups.entries()].map(([project, items]) => {
     const collapsed = collapsedProjects.has(project);
     return `<section class="project-group">
-      <div class="project-heading-row">
-        <button class="project-heading ${collapsed ? "collapsed" : ""}" type="button" data-project="${escapeHtml(project)}">
-          <span class="project-chevron">${collapsed ? "›" : "⌄"}</span>
-          <span class="project-title">${escapeHtml(project)}</span>
-          <span class="project-count">${items.length}</span>
-        </button>
-        <button class="save-project-btn" type="button" data-save-project="${escapeHtml(project)}" title="Сохранить все чаты проекта">Сохранить историю</button>
-      </div>
+      <button class="project-heading ${collapsed ? "collapsed" : ""}" type="button" data-project="${escapeHtml(project)}">
+        <span class="project-chevron">${collapsed ? "›" : "⌄"}</span>
+        <span class="project-title">${escapeHtml(project)}</span>
+        <span class="project-count">${items.length}</span>
+      </button>
       ${collapsed ? "" : `<div class="project-chats">${items.map(c => `
-        <button type="button" class="chat-item ${c.id===selectedId?"active":""}" data-id="${c.id}" title="${escapeHtml(c.title)}">
-          <span class="chat-name">${escapeHtml(c.title)}</span>
-          ${c.saved ? `<span class="saved-indicator" title="Есть локальная копия">●</span>` : ""}
-        </button>`).join("")}</div>`}
+        <div class="source-chat-row">
+          <button type="button" class="chat-item ${c.id===selectedId?"active":""}" data-id="${c.id}" title="${escapeHtml(c.title)}">
+            <span class="chat-name">${escapeHtml(c.title)}</span>
+          </button>
+          <button type="button" class="save-chat-btn ${c.in_local?"in-local":""}" data-save-id="${c.id}" title="${c.in_local?"Добавить новые сообщения в локальный чат проекта":"Сохранить этот чат в локальную историю проекта"}">
+            ${c.in_local ? "Добавить новые" : "Сохранить чат"}
+          </button>
+        </div>`).join("")}</div>`}
     </section>`;
   }).join("");
 
+  $("chatList").innerHTML = html;
   $("chatList").querySelectorAll(".project-heading").forEach(el => {
     el.addEventListener("click", () => {
       const project = el.dataset.project;
@@ -56,11 +80,11 @@ function renderList() {
       renderList();
     });
   });
-  $("chatList").querySelectorAll(".save-project-btn").forEach(el => {
-    el.addEventListener("click", () => saveProject(el.dataset.saveProject, el));
-  });
   $("chatList").querySelectorAll(".chat-item").forEach(el => {
     el.addEventListener("click", () => openChat(el.dataset.id));
+  });
+  $("chatList").querySelectorAll(".save-chat-btn").forEach(el => {
+    el.addEventListener("click", () => saveChat(el.dataset.saveId, el));
   });
 }
 
@@ -76,18 +100,18 @@ async function scan() {
     if (!response.ok) throw new Error(data.error || "Не удалось просканировать папку.");
     chats = data.chats; selectedId = null; currentChat = null; collapsedProjects.clear();
     $("chatCount").textContent = data.count;
-    $("scanInfo").textContent = `Источник: ${data.projects_dir} · найдено в папке: ${data.source_count} · в локальном архиве: ${data.saved_count}`;
+    $("scanInfo").textContent = `Источник: ${data.projects_dir} · исходных чатов: ${data.source_count} · локальных чатов: ${data.local_count}`;
     $("welcome").classList.remove("hidden");
     $("conversationActions").classList.add("hidden");
     $("messages").classList.add("hidden");
     $("messages").innerHTML = "";
     renderList();
-    toast(`Диалогов в списке: ${data.count}`);
+    toast(`В списке чатов: ${data.count}`);
   } catch (e) { toast(e.message); }
   finally { $("scanBtn").disabled = false; $("scanBtn").textContent = "Найти чаты"; }
 }
 
-function toolDetailsMarkup(tool, index, total) {
+function toolDetailsMarkup(tool) {
   const name = escapeHtml(tool.tool_name || "Инструмент");
   const input = tool.tool_input == null ? "" : (typeof tool.tool_input === "string" ? tool.tool_input : JSON.stringify(tool.tool_input, null, 2));
   const result = tool.tool_result || "";
@@ -112,9 +136,9 @@ function renderConversation(messages) {
       while (j < messages.length && messages[j].role === "tool") j++;
       const run = messages.slice(i, j);
       if (run.length >= 2) {
-        output.push(`<details class="tool-run"><summary><span>⚙ Свернуто вызовов инструментов: ${run.length}</span><span class="tool-run-hint">Показать</span></summary><div class="tool-run-content">${run.map((t, n) => toolDetailsMarkup(t, n, run.length)).join("")}</div></details>`);
+        output.push(`<details class="tool-run"><summary><span>⚙ Свернуто вызовов инструментов: ${run.length}</span><span class="tool-run-hint">Показать</span></summary><div class="tool-run-content">${run.map(t => toolDetailsMarkup(t)).join("")}</div></details>`);
       } else {
-        output.push(`<details class="tool-single"><summary>⚙ ${escapeHtml(message.tool_name || "Инструмент")}</summary>${toolDetailsMarkup(message, 0, 1)}</details>`);
+        output.push(`<details class="tool-single"><summary>⚙ ${escapeHtml(message.tool_name || "Инструмент")}</summary>${toolDetailsMarkup(message)}</details>`);
       }
       i = j;
       continue;
@@ -149,7 +173,8 @@ async function openChat(id) {
     renderList();
     $("welcome").classList.add("hidden");
     $("conversationActions").classList.remove("hidden");
-    $("conversationTitle").textContent = data.title;
+    $("conversationTitle").textContent = data.is_local ? `${data.title} · локальная история` : data.title;
+    $("saveCurrentChatBtn").classList.toggle("hidden", !!data.is_local);
     $("messages").classList.remove("hidden");
     renderConversation(data.messages || []);
     const scrollToBottom = () => {
@@ -162,20 +187,39 @@ async function openChat(id) {
   } catch(e) { toast(e.message || "Ошибка загрузки диалога."); }
 }
 
-async function saveProject(project, button) {
-  const original = button.textContent;
-  button.disabled = true; button.textContent = "Сохраняю...";
+async function saveChat(chatId, button = null) {
+  const targetId = chatId || selectedId;
+  if (!targetId) return toast("Сначала выбери чат для сохранения.");
+  const source = chats.find(c => c.id === targetId);
+  if (source?.is_local) return toast("Это уже локальный чат проекта.");
+  const original = button?.textContent || $("saveCurrentChatBtn").textContent;
+  const buttonToDisable = button || $("saveCurrentChatBtn");
+  buttonToDisable.disabled = true;
+  if (button) button.textContent = "Сохраняю...";
+  else buttonToDisable.textContent = "Сохраняю...";
   try {
-    const response = await fetch("/api/project/save", {
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({project})
-    });
+    const response = await fetch(`/api/chat/${targetId}/save`, {method:"POST"});
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Не удалось сохранить историю.");
-    chats = chats.map(c => c.project === project ? {...c, saved:true} : c);
+    if (!response.ok) throw new Error(data.error || "Не удалось сохранить чат.");
+
+    const localChat = data.local_chat;
+    const sourceIndex = chats.findIndex(c => c.id === targetId);
+    if (sourceIndex >= 0) chats[sourceIndex] = {...chats[sourceIndex], in_local:true};
+    const localIndex = chats.findIndex(c => c.id === localChat.id);
+    if (localIndex >= 0) chats[localIndex] = localChat;
+    else chats.unshift(localChat);
     renderList();
-    $("scanInfo").textContent = `Локальный архив: ${data.path}`;
-    toast(`Сохранено чатов проекта «${project}»: ${data.saved_chats}`);
-  } catch(e) { toast(e.message); button.disabled = false; button.textContent = original; }
+    $("chatCount").textContent = chats.length;
+    $("scanInfo").textContent = `Локальный файл проекта: ${data.local_chat_path}`;
+    const verb = data.created ? "Создан локальный чат" : "Добавлено в локальный чат";
+    toast(data.added_count ? `${verb}: ${data.added_count} элементов` : "Новых сообщений для добавления нет.");
+  } catch(e) {
+    toast(e.message);
+  } finally {
+    buttonToDisable.disabled = false;
+    if (button) button.textContent = original;
+    else buttonToDisable.textContent = original;
+  }
 }
 
 async function deleteMessage(messageId, button) {
@@ -187,7 +231,7 @@ async function deleteMessage(messageId, button) {
     if (!response.ok) throw new Error(data.error || "Не удалось удалить сообщение.");
     currentChat = data.chat;
     renderConversation(currentChat.messages || []);
-    chats = chats.map(c => c.id === selectedId ? {...c, message_count:currentChat.message_count, preview:currentChat.preview, saved:true} : c);
+    chats = chats.map(c => c.id === selectedId ? {...c, message_count:currentChat.message_count, preview:currentChat.preview, is_local:currentChat.is_local} : c);
     renderList();
     toast("Сообщение удалено из локальной истории.");
   } catch(e) { toast(e.message); button.disabled = false; }
@@ -218,3 +262,4 @@ $("scanBtn").addEventListener("click", scan);
 $("searchInput").addEventListener("input", renderList);
 $("folderPath").addEventListener("keydown", e => { if (e.key === "Enter") scan(); });
 $("copyHistoryBtn").addEventListener("click", copyHistory);
+$("saveCurrentChatBtn").addEventListener("click", () => saveChat(selectedId));

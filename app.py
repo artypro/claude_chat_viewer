@@ -29,7 +29,7 @@ ALLOWED_ATTRIBUTES = {
     "input": ["type", "checked", "disabled"],
 }
 
-# Active index for the currently scanned source folders and local archive.
+# In-memory index of the source chats currently scanned and local project threads.
 CHAT_FILES = {}
 PROJECTS_DIR = None
 
@@ -71,9 +71,14 @@ def stable_hash(value: str) -> str:
 
 
 def make_chat_id(project: str, session_id: str, file_path: Path) -> str:
-    # Session IDs survive moving/copying a Claude projects folder to another root.
     identity = session_id or file_path.stem
     return stable_hash(f"{project}\0{identity}")
+
+
+def make_local_chat_id(project_name: str) -> str:
+    # One continuous local conversation per project. Each selected source chat
+    # contributes its messages to the end of this local conversation.
+    return stable_hash(f"local-project\0{project_name}")
 
 
 def as_text(value) -> str:
@@ -139,7 +144,6 @@ def parse_chat(file_path: Path, project_dir: Path):
                 record_id = str(item.get("uuid") or message.get("id") or fallback_record_id(item, role, content))
                 timestamp = item.get("timestamp") or ""
 
-                # A plain string is a regular visible message.
                 if isinstance(content, str):
                     text = content.strip()
                     if text:
@@ -208,7 +212,6 @@ def parse_chat(file_path: Path, project_dir: Path):
                             target["tool_result"] = result_text
                             target["tool_error"] = bool(block.get("is_error"))
                         else:
-                            # Keep an unmatched result visible as a tool event, not as a user message.
                             orphan_id = tool_use_id or f"{record_id}:{block_index}"
                             target = {
                                 "id": f"tool-result:{orphan_id}", "role": "tool",
@@ -230,7 +233,10 @@ def parse_chat(file_path: Path, project_dir: Path):
     visible = [m for m in messages if m.get("role") in ("user", "assistant")]
     if not messages:
         return None
-    first_timestamp = next((m.get("timestamp") for m in messages if m.get("timestamp")), "")
+    latest_timestamp = max(
+        (str(m.get("timestamp") or "") for m in messages if m.get("timestamp")),
+        default="",
+    )
     preview = next((m["text"][:140] for m in visible if m["role"] == "user"), "")
     if not preview and visible:
         preview = visible[0]["text"][:140]
@@ -240,12 +246,14 @@ def parse_chat(file_path: Path, project_dir: Path):
         "project": project_name,
         "cwd": cwd,
         "session_id": str(session_id),
-        "updated": first_timestamp,
+        "updated": latest_timestamp,
         "message_count": len(visible),
         "preview": preview,
         "messages": messages,
         "deleted_ids": [],
         "saved": False,
+        "in_local": False,
+        "is_local": False,
         "source_path": str(file_path),
     }
 
@@ -259,7 +267,8 @@ def project_history_path(project_name: str) -> Path:
 
 
 def public_chat(chat: dict, include_messages=False):
-    result = {k: v for k, v in chat.items() if k not in ("messages", "deleted_ids", "source_path")}
+    hidden = ("messages", "deleted_ids", "source_path", "imported_message_keys")
+    result = {k: v for k, v in chat.items() if k not in hidden}
     if include_messages:
         result["messages"] = [
             ({**m, "html": render_markdown(m.get("text", ""))} if m.get("role") in ("user", "assistant") else m)
@@ -269,6 +278,7 @@ def public_chat(chat: dict, include_messages=False):
 
 
 def append_chat_snapshot(chat: dict):
+    """Persist a source-chat edit/deletion for backward compatibility."""
     path = project_history_path(chat["project"])
     snapshot = {
         "record": "chat_snapshot",
@@ -282,7 +292,26 @@ def append_chat_snapshot(chat: dict):
     chat["saved"] = True
 
 
+def append_local_chat_snapshot(chat: dict):
+    path = project_history_path(chat["project"])
+    snapshot = {
+        "record": "local_chat_snapshot",
+        "chat": {k: chat.get(k, "") for k in (
+            "id", "title", "project", "cwd", "session_id", "updated",
+            "message_count", "preview", "source_chat_ids", "source_chat_titles"
+        )},
+        "messages": sorted(chat.get("messages", []), key=lambda x: x.get("order", 0)),
+        "deleted_ids": sorted(set(chat.get("deleted_ids", []))),
+        "imported_message_keys": sorted(set(chat.get("imported_message_keys", []))),
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(snapshot, ensure_ascii=False, default=str) + "\n")
+    chat["saved"] = True
+
+
 def load_archived_chats():
+    """Load older source-chat snapshots so existing archives are not lost."""
     archived = {}
     if not HISTORY_DIR.exists():
         return archived
@@ -305,11 +334,46 @@ def load_archived_chats():
                         "messages": snapshot.get("messages") or [],
                         "deleted_ids": snapshot.get("deleted_ids") or [],
                         "saved": True,
+                        "in_local": False,
+                        "is_local": False,
                         "source_path": "",
                     }
         except (OSError, UnicodeError):
             continue
     return archived
+
+
+def load_local_chats():
+    local_chats = {}
+    if not HISTORY_DIR.exists():
+        return local_chats
+    for path in HISTORY_DIR.glob("*.jsonl"):
+        try:
+            with path.open("r", encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        snapshot = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if snapshot.get("record") != "local_chat_snapshot" or not isinstance(snapshot.get("chat"), dict):
+                        continue
+                    meta = snapshot["chat"]
+                    local_id = meta.get("id")
+                    if not local_id:
+                        continue
+                    local_chats[local_id] = {
+                        **meta,
+                        "messages": snapshot.get("messages") or [],
+                        "deleted_ids": snapshot.get("deleted_ids") or [],
+                        "imported_message_keys": snapshot.get("imported_message_keys") or [],
+                        "saved": True,
+                        "in_local": True,
+                        "is_local": True,
+                        "source_path": "",
+                    }
+        except (OSError, UnicodeError):
+            continue
+    return local_chats
 
 
 def merge_chats(existing: Optional[dict], incoming: dict) -> dict:
@@ -324,19 +388,85 @@ def merge_chats(existing: Optional[dict], incoming: dict) -> dict:
     result["messages"] = sorted(merged_messages.values(), key=lambda m: m.get("order", 0))
     result["deleted_ids"] = sorted(deleted)
     result["saved"] = bool(existing.get("saved") or incoming.get("saved"))
-    # Preserve archive metadata if the latest source did not provide it.
+    result["in_local"] = bool(existing.get("in_local") or incoming.get("in_local"))
+    result["is_local"] = False
     if not incoming.get("source_path"):
         result["source_path"] = existing.get("source_path", "")
-    visible = [m for m in result["messages"] if m.get("role") in ("user", "assistant")]
-    result["message_count"] = len(visible)
-    result["preview"] = next((m["text"][:140] for m in visible if m["role"] == "user"), visible[0]["text"][:140] if visible else "")
+    refresh_chat_metadata(result)
     return result
 
 
 def refresh_chat_metadata(chat: dict):
-    visible = [m for m in chat.get("messages", []) if m.get("role") in ("user", "assistant")]
+    messages = chat.get("messages", [])
+    visible = [m for m in messages if m.get("role") in ("user", "assistant")]
     chat["message_count"] = len(visible)
-    chat["preview"] = next((m["text"][:140] for m in visible if m["role"] == "user"), visible[0]["text"][:140] if visible else "")
+    chat["preview"] = next((m["text"][:140] for m in visible if m.get("role") == "user"), visible[0]["text"][:140] if visible else "")
+    # Claude timestamps are ISO-8601, so their string order is chronological.
+    # Use the newest event (including tool events) as the chat's last activity.
+    chat["updated"] = max(
+        (str(m.get("timestamp") or "") for m in messages if m.get("timestamp")),
+        default=chat.get("updated", ""),
+    )
+
+
+def create_local_chat(project_name: str) -> dict:
+    local_id = make_local_chat_id(project_name)
+    return {
+        "id": local_id,
+        "title": project_name,
+        "project": project_name,
+        "cwd": "",
+        "session_id": f"local-{local_id[:12]}",
+        "updated": datetime.now().isoformat(timespec="seconds"),
+        "message_count": 0,
+        "preview": "",
+        "messages": [],
+        "deleted_ids": [],
+        "imported_message_keys": [],
+        "source_chat_ids": [],
+        "source_chat_titles": [],
+        "saved": True,
+        "in_local": True,
+        "is_local": True,
+        "source_path": "",
+    }
+
+
+def append_source_chat_to_local(local_chat: dict, source_chat: dict) -> int:
+    imported = set(local_chat.get("imported_message_keys", []))
+    current_messages = local_chat.setdefault("messages", [])
+    next_order = max((m.get("order", -1) for m in current_messages), default=-1) + 1
+    added = 0
+
+    for source_message in sorted(source_chat.get("messages", []), key=lambda m: m.get("order", 0)):
+        source_message_id = str(source_message.get("id", ""))
+        import_key = stable_hash(f"{source_chat['id']}\0{source_message_id}")
+        if not source_message_id or import_key in imported:
+            continue
+        copied = {k: v for k, v in source_message.items() if k != "html"}
+        copied.update({
+            "id": f"local:{import_key}",
+            "order": next_order,
+            "source_chat_id": source_chat["id"],
+            "source_chat_title": source_chat.get("title", ""),
+        })
+        current_messages.append(copied)
+        imported.add(import_key)
+        next_order += 1
+        added += 1
+
+    local_chat["imported_message_keys"] = sorted(imported)
+    source_ids = set(local_chat.get("source_chat_ids", []))
+    source_ids.add(source_chat["id"])
+    local_chat["source_chat_ids"] = sorted(source_ids)
+    title_map = dict(local_chat.get("source_chat_titles", []))
+    title_map[source_chat["id"]] = source_chat.get("title", "")
+    local_chat["source_chat_titles"] = sorted(title_map.items())
+    local_chat["updated"] = datetime.now().isoformat(timespec="seconds")
+    if not local_chat.get("cwd"):
+        local_chat["cwd"] = source_chat.get("cwd", "")
+    refresh_chat_metadata(local_chat)
+    return added
 
 
 @app.route("/")
@@ -357,12 +487,11 @@ def scan():
         return jsonify({"error": str(exc)}), 400
 
     PROJECTS_DIR = projects_dir
-    # Keep previously scanned, not-yet-saved sources in this running session too.
-    # This lets the user scan several Claude roots in succession and save once.
-    previous_chats = CHAT_FILES
+    previous_sources = {k: v for k, v in CHAT_FILES.items() if not v.get("is_local")}
     CHAT_FILES = load_archived_chats()
-    for previous in previous_chats.values():
+    for previous in previous_sources.values():
         CHAT_FILES[previous["id"]] = merge_chats(CHAT_FILES.get(previous["id"]), previous)
+
     source_count = 0
     for project_dir in projects_dir.iterdir():
         if not project_dir.is_dir():
@@ -374,13 +503,24 @@ def scan():
             source_count += 1
             CHAT_FILES[parsed["id"]] = merge_chats(CHAT_FILES.get(parsed["id"]), parsed)
 
+    local_chats = load_local_chats()
+    for local_chat in local_chats.values():
+        CHAT_FILES[local_chat["id"]] = local_chat
+
+    local_ids_by_project = {}
+    for local_chat in local_chats.values():
+        local_ids_by_project.setdefault(local_chat["project"], set()).update(local_chat.get("source_chat_ids", []))
+    for chat in CHAT_FILES.values():
+        if not chat.get("is_local"):
+            chat["in_local"] = chat.get("id") in local_ids_by_project.get(chat.get("project"), set())
+
     chats = [public_chat(chat) for chat in CHAT_FILES.values()]
-    chats.sort(key=lambda c: c.get("updated", ""), reverse=True)
+    chats.sort(key=lambda c: (not c.get("is_local", False), c.get("updated", "")), reverse=False)
     return jsonify({
         "projects_dir": str(projects_dir),
         "count": len(chats),
         "source_count": source_count,
-        "saved_count": sum(1 for c in chats if c.get("saved")),
+        "local_count": len(local_chats),
         "chats": chats,
     })
 
@@ -393,24 +533,36 @@ def get_chat(chat_id):
     return jsonify(public_chat(chat, include_messages=True))
 
 
-@app.post("/api/project/save")
-def save_project():
-    data = request.get_json(silent=True) or {}
-    project_name = (data.get("project") or "").strip()
-    if not project_name:
-        return jsonify({"error": "Не указано название проекта."}), 400
-    project_chats = [c for c in CHAT_FILES.values() if c.get("project") == project_name]
-    if not project_chats:
-        return jsonify({"error": "В этом проекте нет диалогов для сохранения."}), 404
+@app.post("/api/chat/<chat_id>/save")
+def save_chat(chat_id):
+    source_chat = CHAT_FILES.get(chat_id)
+    if not source_chat:
+        return jsonify({"error": "Исходный диалог не найден."}), 404
+    if source_chat.get("is_local"):
+        return jsonify({"error": "Этот чат уже является локальной историей проекта."}), 400
+
+    project_name = source_chat.get("project") or "Без проекта"
+    local_id = make_local_chat_id(project_name)
+    local_chat = CHAT_FILES.get(local_id)
+    created = local_chat is None
+    if created:
+        local_chat = create_local_chat(project_name)
 
     try:
-        for chat in project_chats:
-            refresh_chat_metadata(chat)
-            append_chat_snapshot(chat)
+        added_count = append_source_chat_to_local(local_chat, source_chat)
+        append_local_chat_snapshot(local_chat)
     except OSError as exc:
         return jsonify({"error": f"Не удалось записать локальный архив: {exc}"}), 500
 
-    return jsonify({"ok": True, "project": project_name, "saved_chats": len(project_chats), "path": str(project_history_path(project_name))})
+    CHAT_FILES[local_id] = local_chat
+    source_chat["in_local"] = True
+    return jsonify({
+        "ok": True,
+        "created": created,
+        "added_count": added_count,
+        "local_chat": public_chat(local_chat),
+        "local_chat_path": str(project_history_path(project_name)),
+    })
 
 
 @app.delete("/api/chat/<chat_id>/message/<path:message_id>")
@@ -426,14 +578,15 @@ def delete_message(chat_id, message_id):
     chat.setdefault("deleted_ids", []).append(message_id)
     chat["deleted_ids"] = sorted(set(chat["deleted_ids"]))
     refresh_chat_metadata(chat)
-    # Persist deletion immediately, even if this chat had not yet been explicitly saved.
     try:
-        append_chat_snapshot(chat)
+        if chat.get("is_local"):
+            append_local_chat_snapshot(chat)
+        else:
+            append_chat_snapshot(chat)
     except OSError as exc:
         return jsonify({"error": f"Не удалось сохранить удаление: {exc}"}), 500
     return jsonify({"ok": True, "chat": public_chat(chat, include_messages=True)})
 
 
 if __name__ == "__main__":
-    # Localhost only: the viewer is intended for personal use on this computer.
     app.run(host="127.0.0.1", port=5055, debug=False)

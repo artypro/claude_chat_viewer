@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claude Chat Viewer</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
   <header class="topbar">
@@ -33,12 +33,12 @@
       </div>
       <div id="conversationActions" class="conversation-actions hidden">
         <span id="conversationTitle" class="conversation-title"></span>
-        <button id="copyHistoryBtn" class="secondary-btn" type="button">Скопировать историю</button>
+        <div class="conversation-buttons"><button id="saveCurrentChatBtn" class="primary-btn" type="button">Сохранить чат</button><button id="copyHistoryBtn" class="secondary-btn" type="button">Скопировать историю</button></div>
       </div>
       <div id="messages" class="messages hidden"></div>
     </section>
   </main>
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

@@ -113,3 +113,29 @@ button{border:0;border-radius:9px;background:#d97757;color:white;padding:0 17px;
 }
 
 .message-topline{width:100%}
+
+
+/* Per-chat save and separate project-local conversation list. */
+.sidebar-section-title{display:flex;align-items:center;justify-content:space-between;padding:13px 15px 8px;color:#9b674f;text-transform:uppercase;letter-spacing:.06em;font-size:9px;font-weight:750}
+.sidebar-section-title span{color:#aaa;font-weight:500}
+.local-section{border-bottom:1px solid #eae6e0;padding-bottom:8px;margin-bottom:5px}
+.local-chat-item{display:flex;align-items:center;gap:8px;padding-left:18px!important}
+.local-chat-mark{font-size:9px;color:#73a17e}
+.source-chat-row{display:flex;align-items:center;gap:4px;border-top:1px solid #f1f0ed;padding-right:7px}
+.source-chat-row .chat-item{flex:1;min-width:0;border-top:0;padding:10px 7px 10px 35px}
+.source-chat-row .chat-item.active{padding-left:32px}
+.save-chat-btn{flex:0 0 auto;padding:5px 7px;border:1px solid #ead8d0;border-radius:6px;background:#fff7f3;color:#a65a40;font-size:9px;font-weight:650;white-space:nowrap}
+.save-chat-btn:hover{background:#f8e9e2}
+.save-chat-btn:disabled{opacity:.55;cursor:wait}
+.save-chat-btn.in-local{border-color:#e5e7de;background:#f8f9f4;color:#71836d}
+.conversation-buttons{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.primary-btn{padding:8px 12px;border:1px solid #d9a28f;background:#d97757;color:#fff;font-size:11px;white-space:nowrap}
+.primary-btn:hover{background:#c96a4a}
+.primary-btn:disabled{opacity:.6;cursor:wait}
+@media(max-width:760px){
+  .source-chat-row .chat-item{padding-left:9px}
+  .source-chat-row .chat-item.active{padding-left:6px}
+  .save-chat-btn{font-size:8px;padding:4px 5px}
+  .conversation-buttons{gap:5px}
+  .primary-btn{font-size:10px;padding:7px 8px}
+}
