@@ -54,8 +54,8 @@ The app uses:
 Clone the repository:
 
 ```bash
-git clone https://github.com/<your-username>/<your-repository>.git
-cd <your-repository>
+git clone git@github.com:artypro/claude_chat_viewer.git
+cd claude_chat_viewer
 ```
 
 Create and activate a virtual environment.
